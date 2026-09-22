@@ -1,0 +1,7 @@
+Measured reflection coefficients of the 4-port subarray over 0.80-0.92 GHz, covering the UHF RFID lower (865-868 MHz) and upper (915-921 MHz) bands, installed with cables (cable bank not de-embedded). Traces are Savitzky-Golay smoothed and distinguished by colour-matched markers. Resonances are read from the raw sweep. The shaded vertical band indicates the European UHF RFID band (ETSI, 865.7-867.5 MHz).
+
+Trace Port      Marker     Resonances [f (GHz), depth (dB)]
+S11   Ant1, S   circle     0.8672 GHz (-19.11 dB)  |  0.9520 GHz (-20.17 dB)
+S22   Ant1, C   square     0.8648 GHz (-16.43 dB)
+S33   Ant2, S   triangle   0.8684 GHz (-19.13 dB)  |  0.9563 GHz (-18.88 dB)
+S44   Ant2, C   diamond    0.8658 GHz (-18.39 dB)
