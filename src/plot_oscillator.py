@@ -78,40 +78,48 @@ def _nearest_row(df, col: str, value: float):
     return df.loc[idx]
 
 
-def _find_zero_crossing(df, x_col: str, y_col: str, x_approx: float, window: float, wrap_jump: float = 300.0):
+def _find_zero_crossing(
+    df, x_col: str, y_col: str, x_approx: float, window: float,
+    wrap_jump: float = 300.0, target: float = 0.0,
+):
     """
-    Locate the genuine zero-crossing of ``y_col`` nearest to ``x_approx`` (e.g. a phase trace crossing
-    0 degrees), by linear interpolation between the two bracketing samples within +/- ``window`` of
-    ``x_approx``. A phase trace also jumps from +180 to -180 at its wrap points, which is a sign change
-    but not a real crossing; any step larger than ``wrap_jump`` is treated as a wrap and skipped.
+    Locate the genuine crossing of ``y_col`` through ``target`` nearest to ``x_approx`` (e.g. a phase
+    trace crossing 0 degrees, or wrapping through +/-180 degrees when ``target=180``), by linear
+    interpolation between the two bracketing samples within +/- ``window`` of ``x_approx``. A phase
+    trace also jumps from +180 to -180 at its wrap points, which is a sign change but not a real
+    crossing; any step larger than ``wrap_jump`` is treated as a wrap and skipped. This is done by
+    shifting ``y`` so the requested ``target`` maps to 0 (wrapped into (-180, 180]) and reusing the
+    same 0-crossing / wrap-skip logic either way.
 
     Parameters:
         - df        [pd.DataFrame] : Table to search (columns ``x_col``, ``y_col``).
         - x_col     [str]          : Independent-variable column (e.g. 'freq', in Hz).
-        - y_col     [str]          : Dependent-variable column to zero-cross (e.g. phase, in degrees).
+        - y_col     [str]          : Dependent-variable column to cross (e.g. phase, in degrees).
         - x_approx  [float]        : Approximate location to search around, same units as ``x_col``.
         - window    [float]        : Half-width of the search window around ``x_approx``, same units as ``x_col``.
         - wrap_jump [float]        : Step size above which a sign change is treated as a wrap-around, not
                                       a genuine crossing.
+        - target    [float]        : Value ``y_col`` must cross (e.g. 0 or +/-180 degrees).
 
     Returns:
-        - tuple[float, float] : (x, y) of the interpolated crossing (y ~= 0). Falls back to the nearest
-                                 sample to ``x_approx`` within the window if no genuine crossing is found.
+        - tuple[float, float] : (x, y) of the interpolated crossing (y ~= ``target``). Falls back to the
+                                 nearest sample to ``x_approx`` within the window if no genuine crossing found.
     """
     sub = df[(df[x_col] >= x_approx - window) & (df[x_col] <= x_approx + window)].sort_values(x_col)
     x = sub[x_col].to_numpy()
     y = sub[y_col].to_numpy()
+    y_shifted = ((y - target + 180.0) % 360.0) - 180.0 if target else y
 
     candidates = []
-    for i in range(len(y) - 1):
-        y0, y1 = y[i], y[i + 1]
+    for i in range(len(y_shifted) - 1):
+        y0, y1 = y_shifted[i], y_shifted[i + 1]
         if np.isnan(y0) or np.isnan(y1) or abs(y1 - y0) > wrap_jump:
             continue
         if y0 == 0:
-            candidates.append((x[i], 0.0))
+            candidates.append((x[i], target))
         elif y0 * y1 < 0:
             t = -y0 / (y1 - y0)
-            candidates.append((x[i] + t * (x[i + 1] - x[i]), 0.0))
+            candidates.append((x[i] + t * (x[i + 1] - x[i]), target))
 
     if not candidates:
         row = _nearest_row(sub, x_col, x_approx) if len(sub) else _nearest_row(df, x_col, x_approx)
@@ -395,13 +403,19 @@ class OscillatorPlotter:
         filename: str = 'open_loop_gain',
         xlim           = None,
         phase_search_window_ghz: float = 0.01,
+        nominal_marker: bool = False,
+        nominal_note:   str | None = None,
     ) -> None:
         """
         Plot the Randall-Hock corrected open-loop gain magnitude (dB) and phase (deg) vs. frequency, each
         as a single plain trace. The magnitude panel is marked at ``f_mark_mag_ghz`` directly (nearest
-        exported sample). The phase panel is marked at the genuine zero-phase crossing found within
-        +/- ``phase_search_window_ghz`` of ``f_mark_phase_ghz`` - not just the nearest sample to that
-        frequency, which need not itself sit at 0 degrees.
+        exported sample). By default the phase panel is marked at the genuine zero-phase crossing found
+        within +/- ``phase_search_window_ghz`` of ``f_mark_phase_ghz`` - not just the nearest sample to
+        that frequency, which need not itself sit at 0 degrees. When ``nominal_marker=True`` (for data
+        too numerically degenerate to trust a solved crossing - e.g. Gc snapping to a handful of exact
+        atan() angles across the whole sweep), the phase panel is instead marked at the nearest exported
+        sample to ``f_mark_phase_ghz`` directly, same as the magnitude panel, and ``nominal_note`` (if
+        given) is printed in a corner to flag that the marker is nominal rather than solved.
 
         Parameters:
             - parser_mag        [ADSListParser] : Parsed open_loop_gain_magnitude.csv ('freq' Hz, gain column dB).
@@ -411,6 +425,8 @@ class OscillatorPlotter:
             - filename          [str]           : Output file stem (no extension).
             - xlim              (tuple|None)    : (f_min, f_max) in GHz, or None for the full exported sweep.
             - phase_search_window_ghz [float]   : Half-width, in GHz, of the window searched for the crossing.
+            - nominal_marker    [bool]          : If True, skip the zero-crossing search (see above).
+            - nominal_note      [str|None]      : Corner-note text shown when ``nominal_marker=True``.
 
         Returns:
             - None
@@ -436,14 +452,20 @@ class OscillatorPlotter:
             rf'$f={f_mark_mag_ghz:.3f}$\,GHz' + '\n' + rf'${mag_pt[mag_col]:.2f}$\,dB',
             xytext=(0.80, 0.90),
         )
-        f_cross, y_cross = _find_zero_crossing(
-            phase, 'freq', phase_col, f_mark_phase_ghz * 1e9, phase_search_window_ghz * 1e9,
-        )
+        if nominal_marker:
+            phase_pt = _nearest_row(phase, 'freq', f_mark_phase_ghz * 1e9)
+            f_cross, y_cross = phase_pt['freq'], phase_pt[phase_col]
+        else:
+            f_cross, y_cross = _find_zero_crossing(
+                phase, 'freq', phase_col, f_mark_phase_ghz * 1e9, phase_search_window_ghz * 1e9,
+            )
         self._annotate_marker(
             ax_ph, f_cross / 1e9, y_cross,
             rf'$f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${y_cross:.1f}^\circ$',
             xytext=(0.80, 0.15),
         )
+        if nominal_marker and nominal_note:
+            self._corner_note(ax_ph, nominal_note, loc=(0.02, 0.06), ha='left')
 
         self._style_ax(ax_mag, xlabel='', ylabel=r'$|G_c|$ [dB]', xlim=xlim, legend=False)
         self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle G_c$ [$^\circ$]', xlim=xlim, legend=False)
@@ -459,22 +481,28 @@ class OscillatorPlotter:
         filename:   str   = 'osctest_nyquist',
         xlim                     = None,
         search_window_ghz: float = 0.01,
+        phase_target_deg: float  = 0.0,
     ) -> None:
         """
         Plot the magnitude (dB) and phase (deg) of the loop reflection product vs. frequency from an
         OscTest / OscPort analysis as continuous solid traces, for evaluating the Nyquist stability
-        criterion. The genuine zero-phase crossing is located within +/- ``search_window_ghz`` of
-        ``f_mark_ghz`` and that exact frequency is then marked on both panels (the magnitude value
-        there is interpolated from the magnitude trace, since the two exports don't share a sample grid).
+        criterion. The genuine phase crossing through ``phase_target_deg`` is located within +/-
+        ``search_window_ghz`` of ``f_mark_ghz`` and that exact frequency is then marked on both panels
+        (the magnitude value there is interpolated from the magnitude trace, since the two exports don't
+        share a sample grid). ``phase_target_deg`` defaults to 0 (the usual Barkhausen phase condition);
+        pass 180 for a loop whose phase reference is offset by pi, e.g. it wraps through +/-180 degrees
+        near resonance instead of crossing 0 - the sign convention depends on how the loop was broken/
+        probed in the schematic, not on the topology per se.
 
         Parameters:
             - parser_mag   [ADSListParser] : Parsed nyquist_s11_dB.csv ('freq' Hz, magnitude column dB).
             - parser_phase [ADSListParser] : Parsed nyquist_s11_phase.csv ('freq' Hz, phase column deg).
-            - f_mark_ghz   [float]         : Approximate zero-crossing frequency to search around, in GHz.
+            - f_mark_ghz   [float]         : Approximate crossing frequency to search around, in GHz.
             - Zo           [float]         : OscTest reference (probe) impedance in Ohm, noted on the figure.
             - filename     [str]           : Output file stem (no extension).
             - xlim         (tuple|None)    : (f_min, f_max) in GHz, or None for the full exported sweep.
             - search_window_ghz [float]    : Half-width, in GHz, of the window searched for the crossing.
+            - phase_target_deg [float]     : Phase value the loop must cross (0 or +/-180), in degrees.
 
         Returns:
             - None
@@ -494,7 +522,7 @@ class OscillatorPlotter:
         ax_mag.axhline(0.0, color=style.GRID_MAJOR_COLOR, linewidth=0.8, zorder=0)
 
         f_cross, phase_cross = _find_zero_crossing(
-            phase, 'freq', phase_col, f_mark_ghz * 1e9, search_window_ghz * 1e9,
+            phase, 'freq', phase_col, f_mark_ghz * 1e9, search_window_ghz * 1e9, target=phase_target_deg,
         )
         mag_cross = float(np.interp(f_cross, mag['freq'], mag[mag_col]))
 
