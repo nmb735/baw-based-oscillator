@@ -5,7 +5,8 @@
 # criterion, transient output + spectrum, harmonic-balance steady state, and phase noise.                                            #
 # Every figure is saved as both PDF and PNG at >= 600 dpi. Colour/linestyle/marker cycling is reserved for figures that overlay      #
 # multiple traces; a lone trace is drawn as a plain solid line. Large figure-level titles are omitted - context (Zo, carrier          #
-# frequency, marked points) is carried by small formal annotations instead, kept clear of the data with a leader line.               #
+# frequency) is carried by small formal corner notes instead; a marked point of interest is a crosshair (dashed/dotted guide         #
+# lines dropped to both axes) with its value given as a legend entry, not a floating callout box.                                     #
 # Author: Nedal M. Benelmekki                                                                                                         #
 # =================================================================================================================================== #
 
@@ -234,40 +235,49 @@ class OscillatorPlotter:
             ax.set_ylim(ylim)
 
     @staticmethod
-    def _annotate_marker(
-        ax:     plt.Axes,
-        x:      float,
-        y:      float,
-        label:  str,
-        xytext: tuple = (0.8, 0.85),
-    ) -> None:
+    def _mark_point(
+        ax:          plt.Axes,
+        x:           float,
+        y:           float,
+        value_label: str,
+        color:       str | None = None,
+        marker:      str        = 'o',
+        guide_style: str        = '--',
+        markersize:  float | None = None,
+    ):
         """
-        Mark a single point of interest with a small neutral-coloured dot and a formal callout box
-        (white fill, thin grey/black border, connected to the point by a plain leader line) parked
-        in open axes-fraction space rather than sitting directly on top of the trace in the trace's
-        own colour - avoids the callout reading as a stray, informally-coloured legend.
+        Mark a single point of interest IEEE-report style: dashed/dotted guide lines dropped to both
+        axes (a crosshair, so the marked frequency and value can be read straight off the tick marks)
+        plus a small filled marker at the point - no leader-line callout box. The numeric value itself
+        is carried as the marker's own legend label rather than written on the plot; a subsequent
+        ``ax.legend()`` (see ``_style_ax``) picks it up automatically alongside any trace legend entries
+        already on the axes.
 
         Parameters:
-            - ax     [Axes]  : Axes to annotate.
-            - x, y   [float] : Data coordinates of the point to mark.
-            - label  [str]   : Callout text (LaTeX allowed).
-            - xytext (tuple) : Callout box position, in axes-fraction coordinates.
+            - ax          [Axes]       : Axes to annotate.
+            - x, y        [float]      : Data coordinates of the point to mark.
+            - value_label [str]        : Legend text for this point (LaTeX allowed), e.g.
+                                          r'$f=2.963$\\,GHz, $24.49$\\,dB'.
+            - color       [str|None]   : Marker + guide-line colour (defaults to style.SPINE_COLOR).
+            - marker      [str]        : Marker glyph.
+            - guide_style [str]        : Linestyle for the dropped guide lines ('--' or ':').
+            - markersize  [float|None] : Marker size (defaults to MARKER_SIZE * 0.9).
 
         Returns:
-            - None
+            - matplotlib.lines.Line2D : The marker handle, carrying ``value_label`` - legend picks it up
+                                         automatically, but it can also be passed explicitly to
+                                         ax.legend(handles=...).
         """
-        ax.plot(
-            [x], [y], marker='o', markersize=MARKER_SIZE * 0.7,
-            markerfacecolor=style.SPINE_COLOR, markeredgecolor='white', markeredgewidth=1.0,
-            linestyle='None', zorder=6,
+        color = color or style.SPINE_COLOR
+        markersize = markersize or MARKER_SIZE * 0.9
+        ax.axvline(x, color=color, linestyle=guide_style, linewidth=1.0, alpha=0.55, zorder=4, label='_nolegend_')
+        ax.axhline(y, color=color, linestyle=guide_style, linewidth=1.0, alpha=0.55, zorder=4, label='_nolegend_')
+        handle, = ax.plot(
+            [x], [y], marker=marker, markersize=markersize,
+            markerfacecolor=color, markeredgecolor='white', markeredgewidth=1.0,
+            linestyle='None', zorder=6, label=value_label,
         )
-        ax.annotate(
-            label, xy=(x, y), xycoords='data', xytext=xytext, textcoords='axes fraction',
-            fontsize=ANNOTATION_SIZE, color=style.SPINE_COLOR, ha='center', va='center',
-            arrowprops=dict(arrowstyle='-', color=style.SPINE_COLOR, linewidth=1.0, shrinkA=2, shrinkB=6),
-            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec=style.SPINE_COLOR, linewidth=0.9, alpha=0.95),
-            zorder=7,
-        )
+        return handle
 
     @staticmethod
     def _corner_note(ax: plt.Axes, text: str, loc: tuple = (0.97, 0.95), ha: str = 'right', va: str = 'top') -> None:
@@ -414,8 +424,9 @@ class OscillatorPlotter:
         that frequency, which need not itself sit at 0 degrees. When ``nominal_marker=True`` (for data
         too numerically degenerate to trust a solved crossing - e.g. Gc snapping to a handful of exact
         atan() angles across the whole sweep), the phase panel is instead marked at the nearest exported
-        sample to ``f_mark_phase_ghz`` directly, same as the magnitude panel, and ``nominal_note`` (if
-        given) is printed in a corner to flag that the marker is nominal rather than solved.
+        sample to ``f_mark_phase_ghz`` directly, same as the magnitude panel, its legend entry is tagged
+        "(nominal)", and ``nominal_note`` (if given) is printed in a corner to flag that the marker is
+        nominal rather than solved.
 
         Parameters:
             - parser_mag        [ADSListParser] : Parsed open_loop_gain_magnitude.csv ('freq' Hz, gain column dB).
@@ -447,28 +458,27 @@ class OscillatorPlotter:
         ax_ph.axhline(0.0, color=style.GRID_MAJOR_COLOR, linewidth=0.8, zorder=0)
 
         mag_pt = _nearest_row(mag, 'freq', f_mark_mag_ghz * 1e9)
-        self._annotate_marker(
+        self._mark_point(
             ax_mag, mag_pt['freq'] / 1e9, mag_pt[mag_col],
-            rf'$f={f_mark_mag_ghz:.3f}$\,GHz' + '\n' + rf'${mag_pt[mag_col]:.2f}$\,dB',
-            xytext=(0.80, 0.90),
+            rf'$f={f_mark_mag_ghz:.3f}$\,GHz, ${mag_pt[mag_col]:.2f}$\,dB',
         )
         if nominal_marker:
             phase_pt = _nearest_row(phase, 'freq', f_mark_phase_ghz * 1e9)
             f_cross, y_cross = phase_pt['freq'], phase_pt[phase_col]
+            phase_value_label = rf'$f={f_cross / 1e9:.4f}$\,GHz, ${y_cross:.1f}^\circ$ (nominal)'
         else:
             f_cross, y_cross = _find_zero_crossing(
                 phase, 'freq', phase_col, f_mark_phase_ghz * 1e9, phase_search_window_ghz * 1e9,
             )
-        self._annotate_marker(
-            ax_ph, f_cross / 1e9, y_cross,
-            rf'$f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${y_cross:.1f}^\circ$',
-            xytext=(0.80, 0.15),
-        )
+            phase_value_label = rf'$f={f_cross / 1e9:.4f}$\,GHz, ${y_cross:.1f}^\circ$'
+        self._mark_point(ax_ph, f_cross / 1e9, y_cross, phase_value_label)
         if nominal_marker and nominal_note:
             self._corner_note(ax_ph, nominal_note, loc=(0.02, 0.06), ha='left')
 
-        self._style_ax(ax_mag, xlabel='', ylabel=r'$|G_c|$ [dB]', xlim=xlim, legend=False)
-        self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle G_c$ [$^\circ$]', xlim=xlim, legend=False)
+        self._style_ax(ax_mag, xlabel='', ylabel=r'$|G_c|$ [dB]', xlim=xlim,
+                        legend_kw=dict(fontsize=SMALL_SIZE))
+        self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle G_c$ [$^\circ$]', xlim=xlim,
+                        legend_kw=dict(fontsize=SMALL_SIZE))
         self._save(fig, filename)
 
     # ═══════════════════════════════════════════════════════ OSCTEST NYQUIST ═══
@@ -526,21 +536,20 @@ class OscillatorPlotter:
         )
         mag_cross = float(np.interp(f_cross, mag['freq'], mag[mag_col]))
 
-        self._annotate_marker(
+        self._mark_point(
             ax_mag, f_cross / 1e9, mag_cross,
-            rf'$f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${mag_cross:.2f}$\,dB',
-            xytext=(0.78, 0.85),
+            rf'$f={f_cross / 1e9:.4f}$\,GHz, ${mag_cross:.2f}$\,dB',
         )
-        self._annotate_marker(
+        self._mark_point(
             ax_ph, f_cross / 1e9, phase_cross,
-            rf'$f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${phase_cross:.1f}^\circ$',
-            xytext=(0.78, 0.85),
+            rf'$f={f_cross / 1e9:.4f}$\,GHz, ${phase_cross:.1f}^\circ$',
         )
 
         self._corner_note(ax_mag, rf'$Z_o = {Zo:g}\,\Omega$', loc=(0.02, 0.95), ha='left')
-        self._style_ax(ax_mag, xlabel='', ylabel=r'$|\Gamma_{loop}|$ [dB]', xlim=xlim, legend=False)
+        self._style_ax(ax_mag, xlabel='', ylabel=r'$|\Gamma_{loop}|$ [dB]', xlim=xlim,
+                        legend_kw=dict(fontsize=SMALL_SIZE))
         self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle\Gamma_{loop}$ [$^\circ$]',
-                        xlim=xlim, legend=False)
+                        xlim=xlim, legend_kw=dict(fontsize=SMALL_SIZE))
         self._save(fig, filename)
 
     # ═══════════════════════════════════════════════════════ TRANSIENT + FFT ═══
@@ -741,16 +750,15 @@ class OscillatorPlotter:
 
         pt = _nearest_row(df, offset_col, mark_offset_hz)
         offset_label = f'{mark_offset_hz / 1e3:g}\\,kHz' if mark_offset_hz < 1e6 else f'{mark_offset_hz / 1e6:g}\\,MHz'
-        self._annotate_marker(
+        self._mark_point(
             ax, pt[offset_col], pt[pn_col],
-            rf'${pt[pn_col]:.1f}$\,dBc/Hz' + '\n' + rf'@ {offset_label}',
-            xytext=(0.72, 0.85),
+            rf'${pt[pn_col]:.1f}$\,dBc/Hz @ {offset_label}',
         )
         self._corner_note(ax, rf'$f_c={carrier_ghz:g}$\,GHz', loc=(0.97, 0.06))
 
         self._style_ax(
             ax, xlabel=r'Offset frequency $\Delta f$ [Hz]', ylabel=r'$\mathcal{L}(\Delta f)$ [dBc/Hz]',
-            legend=False,
+            legend_kw=dict(fontsize=SMALL_SIZE),
         )
         self._save(fig, filename)
 # =================================================================================================================================== #

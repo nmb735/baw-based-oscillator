@@ -1,9 +1,11 @@
 # =================================================================================================================================== #
 # ----------------------------------------------------------- DESCRIPTION ----------------------------------------------------------- #
 # ComparisonPlotter: two-topology overlay figures (Pierce vs. negative-resistance) built from the same ADSListParser data consumed    #
-# by OscillatorPlotter. Subclasses OscillatorPlotter purely for its styling/annotation helpers (_style_ax, _annotate_marker,          #
+# by OscillatorPlotter. Subclasses OscillatorPlotter purely for its styling/annotation helpers (_style_ax, _mark_point,               #
 # _corner_note, _save) and its module-level helpers (_nearest_row, _find_zero_crossing, _markevery) - every figure here overlays      #
-# exactly two traces (one per topology), each drawn in that topology's own colour throughout every comparison figure.                 #
+# exactly two traces (one per topology), each drawn in that topology's own colour throughout every comparison figure. Each marked     #
+# point's crosshair guide lines use a topology-specific linestyle (dashed for A, dotted for B) so two markers sharing one axes stay   #
+# visually distinct even when their crossings sit close together.                                                                     #
 # Author: Nedal M. Benelmekki                                                                                                         #
 # =================================================================================================================================== #
 
@@ -79,9 +81,9 @@ class ComparisonPlotter(OscillatorPlotter):
             2, 1, figsize=(FIG_WIDTH, FIG_HEIGHT * 1.6), sharex=True, constrained_layout=True,
         )
 
-        for mag, phase, label, color, f_mark, nominal, xytext in (
-            (mag_a, phase_a, label_a, self.COLOR_A, f_mark_a_ghz, nominal_a, (0.80, 0.90)),
-            (mag_b, phase_b, label_b, self.COLOR_B, f_mark_b_ghz, nominal_b, (0.80, 0.15)),
+        for mag, phase, label, color, f_mark, nominal, guide_style in (
+            (mag_a, phase_a, label_a, self.COLOR_A, f_mark_a_ghz, nominal_a, '--'),
+            (mag_b, phase_b, label_b, self.COLOR_B, f_mark_b_ghz, nominal_b, ':'),
         ):
             mag_col   = [c for c in mag.df.columns   if c != 'freq'][0]
             phase_col = [c for c in phase.df.columns if c != 'freq'][0]
@@ -94,19 +96,19 @@ class ComparisonPlotter(OscillatorPlotter):
             if nominal:
                 pt = _nearest_row(phase_df, 'freq', f_mark * 1e9)
                 f_cross, y_cross = pt['freq'], pt[phase_col]
+                value_label = rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz, ${y_cross:.1f}^\circ$ (nominal)'
             else:
                 f_cross, y_cross = _find_zero_crossing(
                     phase_df, 'freq', phase_col, f_mark * 1e9, phase_search_window_ghz * 1e9,
                 )
-            self._annotate_marker(
-                ax_ph, f_cross / 1e9, y_cross,
-                rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${y_cross:.1f}^\circ$',
-                xytext=xytext,
-            )
+                value_label = rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz, ${y_cross:.1f}^\circ$'
+            self._mark_point(ax_ph, f_cross / 1e9, y_cross, value_label, color=color, guide_style=guide_style)
 
         ax_ph.axhline(0.0, color=style.GRID_MAJOR_COLOR, linewidth=0.8, zorder=0)
-        self._style_ax(ax_mag, xlabel='', ylabel=r'$|G_c|$ [dB]', xlim=xlim)
-        self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle G_c$ [$^\circ$]', xlim=xlim, legend=False)
+        self._style_ax(ax_mag, xlabel='', ylabel=r'$|G_c|$ [dB]', xlim=xlim,
+                        legend_kw=dict(fontsize=SMALL_SIZE))
+        self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle G_c$ [$^\circ$]', xlim=xlim,
+                        legend_kw=dict(fontsize=SMALL_SIZE))
         self._save(fig, filename)
 
     # ═══════════════════════════════════════════════════════ OSCTEST NYQUIST ═══
@@ -149,9 +151,9 @@ class ComparisonPlotter(OscillatorPlotter):
         )
 
         notes = []
-        for mag, phase, label, color, f_mark, target, Zo, xytext in (
-            (mag_a, phase_a, label_a, self.COLOR_A, f_mark_a_ghz, phase_target_a_deg, Zo_a, (0.78, 0.85)),
-            (mag_b, phase_b, label_b, self.COLOR_B, f_mark_b_ghz, phase_target_b_deg, Zo_b, (0.78, 0.55)),
+        for mag, phase, label, color, f_mark, target, Zo, guide_style in (
+            (mag_a, phase_a, label_a, self.COLOR_A, f_mark_a_ghz, phase_target_a_deg, Zo_a, '--'),
+            (mag_b, phase_b, label_b, self.COLOR_B, f_mark_b_ghz, phase_target_b_deg, Zo_b, ':'),
         ):
             mag_col   = [c for c in mag.df.columns   if c != 'freq'][0]
             phase_col = [c for c in phase.df.columns if c != 'freq'][0]
@@ -165,23 +167,24 @@ class ComparisonPlotter(OscillatorPlotter):
                 phase_df, 'freq', phase_col, f_mark * 1e9, search_window_ghz * 1e9, target=target,
             )
             mag_cross = float(np.interp(f_cross, mag_df['freq'], mag_df[mag_col]))
-            self._annotate_marker(
+            self._mark_point(
                 ax_mag, f_cross / 1e9, mag_cross,
-                rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${mag_cross:.2f}$\,dB',
-                xytext=xytext,
+                rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz, ${mag_cross:.2f}$\,dB',
+                color=color, guide_style=guide_style,
             )
-            self._annotate_marker(
+            self._mark_point(
                 ax_ph, f_cross / 1e9, phase_cross,
-                rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz' + '\n' + rf'${phase_cross:.1f}^\circ$',
-                xytext=xytext,
+                rf'{label}: $f={f_cross / 1e9:.4f}$\,GHz, ${phase_cross:.1f}^\circ$',
+                color=color, guide_style=guide_style,
             )
             notes.append(rf'$Z_o$ ({label}) $= {Zo:g}\,\Omega$')
 
         ax_mag.axhline(0.0, color=style.GRID_MAJOR_COLOR, linewidth=0.8, zorder=0)
         self._corner_note(ax_mag, '\n'.join(notes), loc=(0.02, 0.95), ha='left')
-        self._style_ax(ax_mag, xlabel='', ylabel=r'$|\Gamma_{loop}|$ [dB]', xlim=xlim)
+        self._style_ax(ax_mag, xlabel='', ylabel=r'$|\Gamma_{loop}|$ [dB]', xlim=xlim,
+                        legend_kw=dict(fontsize=SMALL_SIZE))
         self._style_ax(ax_ph, xlabel='Frequency [GHz]', ylabel=r'$\angle\Gamma_{loop}$ [$^\circ$]',
-                        xlim=xlim, legend=False)
+                        xlim=xlim, legend_kw=dict(fontsize=SMALL_SIZE))
         self._save(fig, filename)
 
     # ═══════════════════════════════════════════════════════ TRANSIENT + FFT ═══
@@ -332,19 +335,19 @@ class ComparisonPlotter(OscillatorPlotter):
         fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_HEIGHT), constrained_layout=True)
 
         notes = []
-        for parser, label, color, carrier, xytext in (
-            (parser_a, label_a, self.COLOR_A, carrier_a_ghz, (0.72, 0.85)),
-            (parser_b, label_b, self.COLOR_B, carrier_b_ghz, (0.72, 0.15)),
+        for parser, label, color, carrier, guide_style in (
+            (parser_a, label_a, self.COLOR_A, carrier_a_ghz, '--'),
+            (parser_b, label_b, self.COLOR_B, carrier_b_ghz, ':'),
         ):
             df = parser.df.dropna(subset=[offset_col, pn_col]).sort_values(offset_col)
             ax.plot(df[offset_col], df[pn_col], color=color, linewidth=LINE_WIDTH, label=label)
 
             pt = _nearest_row(df, offset_col, mark_offset_hz)
             offset_label = f'{mark_offset_hz / 1e3:g}\\,kHz' if mark_offset_hz < 1e6 else f'{mark_offset_hz / 1e6:g}\\,MHz'
-            self._annotate_marker(
+            self._mark_point(
                 ax, pt[offset_col], pt[pn_col],
-                rf'{label}: ${pt[pn_col]:.1f}$\,dBc/Hz' + '\n' + rf'@ {offset_label}',
-                xytext=xytext,
+                rf'{label}: ${pt[pn_col]:.1f}$\,dBc/Hz @ {offset_label}',
+                color=color, guide_style=guide_style,
             )
             notes.append(rf'$f_c$ ({label}) $={carrier:g}$\,GHz')
 
